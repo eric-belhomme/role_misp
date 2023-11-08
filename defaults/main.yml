@@ -1,2 +1,48 @@
 ---
 # defaults file for role_misp
+
+misp_root: /var/www/MISP
+
+misp_sql_dbname: misp
+misp_sql_user: mispadmin
+
+www_user: apache
+
+misp_redis_passwd: 'null'
+
+misp_gpg_passphrase:
+misp_gpg_name:
+misp_gpg_email:
+
+
+misp_new_user_message: |
+  Dear new MISP user,
+
+  We would hereby like to welcome you to the \$org MISP community.
+
+  Use the credentials below to log into MISP at \$misp, where you will be prompted to manually change your password to something of your own choice.
+
+  Username: \$username
+  Password: \$password
+
+  If you have any questions, don't hesitate to contact us at: \$contact.
+
+  Best regards,
+  Your \$org MISP support team
+
+misp_password_reset_text: |
+  Dear MISP user,
+
+  A password reset has been triggered for your account. Use the below provided temporary password to log into MISP at \$misp,
+  where you will be prompted to manually change your password to something of your own choice.
+
+  Username: \$username
+  Your temporary password: \$password
+
+  If you have any questions, don't hesitate to contact us at: \$contact.
+
+  Best regards,
+  Your \$org MISP support team
+
+misp_maintenance_text: |
+  Great things are happening! MISP is undergoing maintenance, but will return shortly. You can contact the administration at {{ misp_gpg_email }}.'"

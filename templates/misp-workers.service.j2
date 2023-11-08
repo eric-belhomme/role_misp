@@ -1,0 +1,14 @@
+[Unit]
+Description=MISP background workers
+After=network.target
+
+[Service]
+Type=forking
+User={{ www_user }}
+Group={{ www_user }}
+ExecStart={{ misp_root }}/app/Console/worker/start.sh
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

@@ -1,2 +1,12 @@
 ---
 # handlers file for role_misp
+
+- name: restart_php_fpm
+  ansible.builtin.systemd:
+    name: php-fpm
+    state: restarted
+
+- name: restart_httpd
+  ansible.builtin.systemd:
+    name: httpd
+    state: restarted

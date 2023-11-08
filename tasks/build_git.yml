@@ -1,0 +1,42 @@
+---
+
+- name: Ensure git repos directories exists
+  ansible.builtin.file:
+    path: "/tmp/{{ git_repo | basename }}"
+    state: directory
+    owner: misp
+    group: misp
+    mode: '0750'
+
+- name: Clone git repo {{ git_repo }}
+  ansible.builtin.git:
+    repo: "{{ git_repo }}"
+    dest: "/tmp/{{ git_repo | basename }}"
+    version: '2.4'
+  become: true
+  become_user: misp
+
+- name: Create build directory
+  ansible.builtin.file:
+    path: "/tmp/{{ git_repo | basename }}/build"
+    state: directory
+    owner: misp
+    group: misp
+    mode: '0750'
+
+- name: Build makefile & build binary
+  ansible.builtin.command:
+    chdir: "/tmp/{{ git_repo | basename }}/build"
+    cmd: "{{ item }}"
+  become: true
+  become_user: misp
+  loop:
+    - 'cmake ..'
+    - make
+  changed_when: false
+
+- name: Make install
+  ansible.builtin.command:
+    chdir: "/tmp/{{ git_repo | basename }}/build"
+    cmd: make install
+  changed_when: false

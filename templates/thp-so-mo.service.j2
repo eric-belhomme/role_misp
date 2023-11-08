@@ -1,0 +1,14 @@
+# Ansible Managed
+
+[Unit]
+Description=Disable Kernel Support for THP, Set Socket Max Conxs and Enable Memory Overcommit.
+
+[Service]
+Type=simple
+ExecStart=/bin/sh -c "echo 'never' > /sys/kernel/mm/transparent_hugepage/enabled && \
+    echo 'never' > /sys/kernel/mm/transparent_hugepage/defrag && \
+    echo 1024 > /proc/sys/net/core/somaxconn && \
+    sysctl vm.overcommit_memory=1"
+
+[Install]
+WantedBy=multi-user.target
