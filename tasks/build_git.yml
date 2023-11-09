@@ -8,11 +8,10 @@
     group: misp
     mode: '0750'
 
-- name: Clone git repo {{ git_repo }}
+- name: Clone git repo {{ git_repo }} # noqa: latest[git]
   ansible.builtin.git:
     repo: "{{ git_repo }}"
     dest: "/tmp/{{ git_repo | basename }}"
-    version: '2.4'
   become: true
   become_user: misp
 

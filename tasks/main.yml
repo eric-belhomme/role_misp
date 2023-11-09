@@ -4,22 +4,35 @@
 - name: Asserts
   ansible.builtin.assert:
     that:
-      - misp_sql_dbname is defined and misp_sql_dbname | lenght > 0
-      - misp_sql_user is defined and misp_sql_user | lenght > 0
-      - misp_sql_passswd is defined and misp_sql_passswd | lenght > 0
-      - misp_gpg_passphrase is defined and misp_gpg_passphrase | lenght > 0
-      - misp_gpg_name is defined and misp_gpg_name | lenght > 0
-      - misp_gpg_email is defined and misp_gpg_email | lenght > 0
+      - misp_sql_dbname is defined and misp_sql_dbname | length > 0
+      - misp_sql_user is defined and misp_sql_user | length > 0
+      - misp_sql_passwd is defined and misp_sql_passwd | length > 0
+      - misp_gpg_passphrase is defined and misp_gpg_passphrase | length > 0
+      - misp_gpg_name is defined and misp_gpg_name | length > 0
+      - misp_gpg_email is defined and misp_gpg_email | length > 0
+      - misp_tls_cert is defined and misp_tls_cert | length > 0
+      - misp_tls_key is defined and misp_tls_key | length > 0
+
+- name: Import a Remi's RPM GPG key
+  ansible.builtin.rpm_key:
+    state: present
+    key: "{{ item }}"
+  loop:
+    - https://rpms.remirepo.net/RPM-GPG-KEY-remi
+    - https://rpms.remirepo.net/RPM-GPG-KEY-remi2021
+    - https://rpms.remirepo.net/RPM-GPG-KEY-remi2022
+    - https://rpms.remirepo.net/RPM-GPG-KEY-remi2023
 
 - name: Install required repos
   ansible.builtin.dnf:
     name:
       - epel-release
       - https://rpms.remirepo.net/enterprise/remi-release-9.rpm
+      - haveged
     update_cache: true
 
 - name: Enable Remi's php modules as system default
-  ansible.builtin.command: dnf module install php:remi-7.4
+  ansible.builtin.command: dnf module install -y php:remi-7.4
   changed_when: false
 
 - name: Install required packages
@@ -48,9 +61,9 @@
       - python3-devel
       - python3-pip
       - python3-setuptools
+      - python3-PyMySQL
       - httpd
       - mod_ssl
-      - haveged
       - php-devel
       - php-json
       - php-xml
@@ -68,7 +81,12 @@
       - mariadb
       - mariadb-server
 
-# todo : tuning php
+- name: Enable haveged systemd unit
+  ansible.builtin.systemd:
+    name: haveged.service
+    state: started
+    enabled: true
+
 - name: Configure php.ini
   ansible.builtin.lineinfile:
     path: /etc/php.ini
@@ -112,13 +130,40 @@
     mode: '0640'
   notify: restart_httpd
 
+- name: Check TLS certs
+  ansible.builtin.include_tasks:
+    file: tls.yml
+
+- name: Backup original Apache ssl.conf
+  ansible.builtin.copy:
+    src: /etc/httpd/conf.d/ssl.conf
+    dest: /etc/httpd/conf.d/ssl.conf.disabled
+    remote_src: true
+    force: false
+    owner: root
+    group: root
+    mode: '0640'
+
+- name: Empty original Apache config
+  ansible.builtin.copy:
+    content: |
+      # Ansible Managed
+    dest: "/etc/httpd/conf.d/{{ item }}"
+    owner: root
+    group: root
+    mode: '0640'
+  loop:
+    - autoindex.conf
+    - userdir.conf
+    - welcome.conf
+    - ssl.conf
+
 - name: Enable systemd units
   ansible.builtin.systemd:
     name: "{{ item }}"
     state: started
     enabled: true
   loop:
-    - haveged.service
     - redis.service
     - php-fpm.service
     - httpd.service
@@ -137,7 +182,6 @@
     groups:
       - wheel
       - apache
-
 
 - name: Ensure MISP git repos directory exists
   ansible.builtin.file:
@@ -171,20 +215,26 @@
   community.mysql.mysql_db:
     name: "{{ misp_sql_dbname }}"
     state: present
+    login_unix_socket: /var/lib/mysql/mysql.sock
+    check_implicit_admin: true
   register: mysql_db_present
 
 - name: Create MySQL user account for MISP
   community.mysql.mysql_user:
     name: "{{ misp_sql_user }}"
-    password: "{{ misp_sql_passswd }}"
+    password: "{{ misp_sql_passwd }}"
     priv: "{{ misp_sql_dbname }}.*:ALL"
     state: present
+    login_unix_socket: /var/lib/mysql/mysql.sock
+    check_implicit_admin: true
 
-- name: Create MySQL database for MISP # noqa: no-handler
+- name: Dump MySQL database for MISP # noqa: no-handler
   community.mysql.mysql_db:
     name: "{{ misp_sql_dbname }}"
     state: import
     target: "{{ misp_root }}/INSTALL/MYSQL.sql"
+    login_unix_socket: /var/lib/mysql/mysql.sock
+    check_implicit_admin: true
   register: mysql_db_present
   when: mysql_db_present.changed
 
@@ -199,6 +249,10 @@
     file: build_git.yml
   vars:
     git_repo: https://github.com/stricaud/faup.git
+
+- name: Update ldconfig
+  ansible.builtin.command: ldconfig
+  changed_when: false
 
 - name: Create Python3 venv then upgrade pip & setuptools
   ansible.builtin.pip:
@@ -234,31 +288,32 @@
       - python-magic
       - plyara
 
-- name: Fix ownership & perms for {{ misp_root }}
-  ansible.builtin.command:
+- name: Fix ownership & perms for {{ misp_root }} # noqa: command-instead-of-shell
+  ansible.builtin.shell:
     cmd: "{{ item }}"
   changed_when: false
   loop:
     - "chown -R {{ www_user }}:{{ www_user }} {{ misp_root }}"
     - "chmod -R 0640 {{ misp_root }}"
     - "chmod -R ug+X {{ misp_root }}"
+    - "find {{ misp_root }}/tools -type f -name '*.sh' -or -name '*.py' -exec chmod u+x {} \\;"
+    - "find {{ misp_root }}/app -type f -name '*.sh' -exec chmod u+x {} \\;"
     - "chmod -R g+xws {{ misp_root }}/app/tmp"
     - "chmod -R g+ws {{ misp_root }}/app/files"
     - "chmod -R g+ws {{ misp_root }}/app/files/scripts/tmp"
     - "chmod -R g+rw {{ misp_root }}/venv"
     - "chmod -R g+rw {{ misp_root }}/.git"
+    - "chmod u+x {{ misp_root }}/app/Console/cake {{ misp_root }}/app/Console/worker/*.sh"
+    - "chmod u+x {{ misp_root }}/venv/bin/*"
     - "chcon -t bin_t {{ misp_root }}/venv/bin/*"
     - "chcon -t httpd_sys_rw_content_t {{ misp_root }}/app/files"
     - "chcon -t httpd_sys_rw_content_t {{ misp_root }}/app/files/terms"
     - "chcon -t httpd_sys_rw_content_t {{ misp_root }}/app/files/scripts/tmp"
-    - "chcon -t httpd_sys_rw_content_t {{ misp_root }}/app/Plugin/CakeResque/tmp"
     - "chcon -t httpd_sys_script_exec_t {{ misp_root }}/app/Console/cake"
     - "chcon -t httpd_sys_script_exec_t {{ misp_root }}/app/Console/worker/*.sh"
     - "chcon -t httpd_sys_script_exec_t {{ misp_root }}/app/files/scripts/*.py"
     - "chcon -t httpd_sys_script_exec_t {{ misp_root }}/app/files/scripts/*/*.py"
-    - "chcon -t httpd_sys_script_exec_t {{ misp_root }}/app/files/scripts/lief/build/api/python/lief.so"
-    - "chcon -t httpd_sys_script_exec_t {{ misp_root }}/app/Vendor/pear/crypt_gpg/scripts/crypt-gpg-pinentry"
-  # find ${PATH_TO_MISP}/venv -type f -name "*.so*" -or -name "*.so.*" | xargs sudo chcon -t lib_t
+    - "find {{ misp_root }}/venv -type f -name '*.so*' -or -name '*.so.*' -exec chcon -t lib_t {} \\;"
 
 - name: Create php composer cache directory
   ansible.builtin.file:
@@ -320,7 +375,7 @@
   register: stat_gpg
 
 - name: Create a GPG key
-  when: stat_gpg.exists
+  when: not stat_gpg.stat.exists
   block:
 
     - name: Setup a new GPG key
@@ -396,7 +451,7 @@
 
 - name: Cake set setting
   ansible.builtin.command:
-    cmd: /var/www/MISP/app/Console/cake Admin setSetting {{ item }}
+    cmd: "{{ misp_root }}/app/Console/cake Admin setSetting {{ item }}"
   become: true
   become_user: "{{ www_user }}"
   changed_when: false
@@ -410,14 +465,17 @@
     # Enable GnuPG
     - "GnuPG.email {{ misp_gpg_email }}"
     - "GnuPG.homedir {{ misp_root }}/.gnupg"
-    - "GnuPG.password {{ misp_gpg_passphrase }}"
+    - "GnuPG.password \"{{ misp_gpg_passphrase }}\""
     - 'GnuPG.obscure_subject true'
     - 'GnuPG.binary /usr/bin/gpg'
     # Update other MISP configurations
     - "MISP.host_org_id 1"
-    - "MISP.email {{ misp_gpg_email }}"
+    - "MISP.email \"{{ misp_gpg_email }}\""
+    - "MISP.email_from_name \"{{ misp_email_from_name | default('MISP', true) }}\""
+    - "MISP.baseurl '{{ misp_base_url | default('https://' + ansible_fqdn, true) }}'"
+    - "MISP.external_baseurl '{{ misp_external_base_url | default('https://' + ansible_fqdn, true) }}'"
     - "MISP.disable_emailing true --force"
-    - "MISP.contact {{ misp_gpg_email }}"
+    - "MISP.contact \"{{ misp_gpg_email }}\""
     - "MISP.disablerestalert true"
     - "MISP.showCorrelationsOnIndex true"
     - "MISP.default_event_tag_collection 0"
@@ -427,14 +485,14 @@
     # Set Redis settings
     - "MISP.redis_host 127.0.0.1"
     - "MISP.redis_port 6379"
-    - "MISP.redis_database13"
+    - "MISP.redis_database 13"
     - "MISP.redis_password ''"
     # Set MISP default settings
     - "MISP.ssdeep_correlation_threshold 40"
     - "MISP.extended_alert_subject false"
     - "MISP.default_event_threat_level 4"
-    - "MISP.newUserText '{{ misp_new_user_message }}'"
-    - "MISP.passwordResetText '{{ misp_password_reset_text }}'"
+    - "MISP.newUserText \"{{ misp_new_user_message }}\""
+    - "MISP.passwordResetText \"{{ misp_password_reset_text }}\""
     - "MISP.enableEventBlocklisting true"
     - "MISP.enableOrgBlocklisting true"
     - "MISP.log_client_ip true"
@@ -454,18 +512,19 @@
     - "MISP.event_alert_republish_ban_threshold 5"
     - "MISP.event_alert_republish_ban_refresh_on_retry false"
     - "MISP.incoming_tags_disabled_by_default false"
-    - "MISP.maintenance_message '{{ misp_maintenance_text }}'"
+    - "MISP.maintenance_message \"{{ misp_maintenance_text }}\""
     - "MISP.footermidleft 'This is an initial install'"
     - "MISP.footermidright 'Please configure and harden accordingly'"
     - "MISP.welcome_text_top 'Initial Install, please configure'"
-    - "MISP.welcome_text_bottom 'Welcome to Kifarunix-demo MISP'"
+    - "MISP.welcome_text_bottom 'Welcome to SCC Hyperscale SOC MISP'"
     - "MISP.attachments_dir /var/www/MISP/app/files"
     - "MISP.download_attachments_on_load true"
     - "MISP.event_alert_metadata_only false"
-    - "MISP.title_text 'SCC Hyperscale SOC - MISP"
+    - "MISP.title_text 'SCC Hyperscale SOC - MISP'"
     - "MISP.terms_download false"
     - "MISP.showorgalternate false"
     - "MISP.event_view_filter_fields 'id, uuid, value, comment, type, category, Tag.name'"
+    - "MISP.python_bin '{{ misp_root }}/venv/bin/python3'"
     - "debug 0"
     - "Security.auth_enforced false"
     - "Security.log_each_individual_auth_fail false"
@@ -480,144 +539,43 @@
     - "Security.advanced_authkeys true"
     - "Security.do_not_log_authkeys true"
     - "Security.username_in_response_header true"
-
-
-## Tunning Cortex
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.Cortex_services_enable" false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.Cortex_services_url" "http://127.0.0.1"
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.Cortex_services_port" 9000
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.Cortex_timeout" 120
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.Cortex_authkey" false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.Cortex_ssl_verify_peer" false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.Cortex_ssl_verify_host" false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.Cortex_ssl_allow_self_signed" true
-#
-## Update plugin settings
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.Sightings_policy" 0
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.Sightings_anonymise" false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.Sightings_anonymise_as" 1
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.Sightings_range" 365
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.Sightings_sighting_db_enable" false
-#
-## Disable API_Required modules
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting Plugin.Enrichment_cuckoo_submit_enabled false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting Plugin.Enrichment_vmray_submit_enabled false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting Plugin.Enrichment_circl_passivedns_enabled false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting Plugin.Enrichment_circl_passivessl_enabled false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting Plugin.Enrichment_domaintools_enabled false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting Plugin.Enrichment_eupi_enabled false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting Plugin.Enrichment_farsight_passivedns_enabled false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting Plugin.Enrichment_passivetotal_enabled false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting Plugin.Enrichment_passivetotal_enabled false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting Plugin.Enrichment_virustotal_enabled false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting Plugin.Enrichment_whois_enabled false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting Plugin.Enrichment_shodan_enabled false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting Plugin.Enrichment_geoip_asn_enabled false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting Plugin.Enrichment_geoip_city_enabled false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting Plugin.Enrichment_geoip_country_enabled false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting Plugin.Enrichment_iprep_enabled false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting Plugin.Enrichment_otx_enabled false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting Plugin.Enrichment_vulndb_enabled false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting Plugin.Enrichment_crowdstrike_falcon_enabled false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting Plugin.Enrichment_onyphe_enabled false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting Plugin.Enrichment_xforceexchange_enabled false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting Plugin.Enrichment_vulners_enabled false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting Plugin.Enrichment_macaddress_io_enabled false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting Plugin.Enrichment_intel471_enabled false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting Plugin.Enrichment_backscatter_io_enabled false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting Plugin.Enrichment_hibp_enabled false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting Plugin.Enrichment_greynoise_enabled false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting Plugin.Enrichment_joesandbox_submit_enabled false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting Plugin.Enrichment_virustotal_public_enabled false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting Plugin.Enrichment_apiosintds_enabled false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting Plugin.Enrichment_urlscan_enabled false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting Plugin.Enrichment_securitytrails_enabled false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting Plugin.Enrichment_apivoid_enabled false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting Plugin.Enrichment_assemblyline_submit_enabled false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting Plugin.Enrichment_assemblyline_query_enabled false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting Plugin.Enrichment_ransomcoindb_enabled false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting Plugin.Enrichment_lastline_query_enabled false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting Plugin.Enrichment_sophoslabs_intelix_enabled false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting Plugin.Enrichment_cytomic_orion_enabled false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting Plugin.Enrichment_censys_enrich_enabled false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting Plugin.Enrichment_trustar_enrich_enabled false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting Plugin.Enrichment_recordedfuture_enabled false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting Plugin.ElasticSearch_logging_enable false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting Plugin.S3_enable false
-#
-# CustomAuth Plugin
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.CustomAuth_disable_logout" false
-#
-## RPZ Plugin settings
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.RPZ_policy" "DROP"
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.RPZ_walled_garden" "127.0.0.1"
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.RPZ_serial" "\$date00"
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.RPZ_refresh" "2h"
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.RPZ_retry" "30m"
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.RPZ_expiry" "30d"
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.RPZ_minimum_ttl" "1h"
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.RPZ_ttl" "1w"
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.RPZ_ns" "localhost."
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.RPZ_ns_alt" false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.RPZ_email" "root.localhost"
-#
-## Kafka settings
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.Kafka_enable" false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.Kafka_brokers" "kafka:9092"
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.Kafka_rdkafka_config" "/etc/rdkafka.ini"
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.Kafka_include_attachments" false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.Kafka_event_notifications_enable" false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.Kafka_event_notifications_topic" "misp_event"
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.Kafka_event_publish_notifications_enable" false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.Kafka_event_publish_notifications_topic" "misp_event_publish"
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.Kafka_object_notifications_enable" false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.Kafka_object_notifications_topic" "misp_object"
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.Kafka_object_reference_notifications_enable" false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.Kafka_object_reference_notifications_topic" "misp_object_reference"
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.Kafka_attribute_notifications_enable" false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.Kafka_attribute_notifications_topic" "misp_attribute"
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.Kafka_shadow_attribute_notifications_enable" false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.Kafka_shadow_attribute_notifications_topic" "misp_shadow_attribute"
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.Kafka_tag_notifications_enable" false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.Kafka_tag_notifications_topic" "misp_tag"
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.Kafka_sighting_notifications_enable" false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.Kafka_sighting_notifications_topic" "misp_sighting"
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.Kafka_user_notifications_enable" false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.Kafka_user_notifications_topic" "misp_user"
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.Kafka_organisation_notifications_enable" false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.Kafka_organisation_notifications_topic" "misp_organisation"
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.Kafka_audit_notifications_enable" false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.Kafka_audit_notifications_topic" "misp_audit"
-#
-## ZeroMQ settings
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.ZeroMQ_enable" false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.ZeroMQ_host" "127.0.0.1"
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.ZeroMQ_port" 50000
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.ZeroMQ_redis_host" "localhost"
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.ZeroMQ_redis_port" 6379
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.ZeroMQ_redis_database" 1
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.ZeroMQ_redis_namespace" "mispq"
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.ZeroMQ_event_notifications_enable" false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.ZeroMQ_object_notifications_enable" false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.ZeroMQ_object_reference_notifications_enable" false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.ZeroMQ_attribute_notifications_enable" false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.ZeroMQ_sighting_notifications_enable" false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.ZeroMQ_user_notifications_enable" false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.ZeroMQ_organisation_notifications_enable" false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.ZeroMQ_include_attachments" false
-#sudo -Hu apache /var/www/MISP/app/Console/cake Admin setSetting "Plugin.ZeroMQ_tag_notifications_enable" false
-#
+    # Proxy settings
+    - "Proxy.host {{ misp_proxy_host | default('\"\" --force', true) }}"
+    - "Proxy.port {{ misp_proxy_port | default('\"\" --force', true) }}"
+    - "Proxy.method {{ misp_proxy_method | default('\"\" --force', true) }}"
+    - "Proxy.user {{ misp_proxy_user | default('\"\" --force', true) }}"
+    - "Proxy.password {{ misp_proxy_passwd | default('\"\" --force', true) }}"
+    # Update plugin settings
+    - "Plugin.Sightings_policy 0"
+    - "Plugin.Sightings_anonymise false"
+    - "Plugin.Sightings_anonymise_as 1"
+    - "Plugin.Sightings_range 365"
+    - "Plugin.Sightings_sighting_db_enable false"
+- name: Cake Cortex setting
+  ansible.builtin.command:
+    cmd: "{{ misp_root }}app/Console/cake Admin setSetting {{ item }}"
+  become: true
+  become_user: "{{ www_user }}"
+  changed_when: false
+  loop:
+    - "Plugin.Cortex_services_enable true"
+    - "Plugin.Cortex_services_url '{{ misp_cortex_host }}'"
+    - "Plugin.Cortex_services_port {{ misp_cortex_port | default('9000', true) }}"
+    - "Plugin.Cortex_timeout 120"
+  when:
+    - misp_cortex_host is defined
+    - misp_cortex_host | length > 0
 
 - name: Enable MISP user login
   ansible.builtin.command:
-    cmd: /var/www/MISP/app/Console/cake Live 1
+    cmd: "{{ misp_root }}/app/Console/cake Live 1"
   become: true
   become_user: "{{ www_user }}"
   changed_when: false
 
 - name: Update MISP Galaxies, ObjectTemplates, Warninglists, Noticelists, Templates
   ansible.builtin.command:
-    cmd: /var/www/MISP/app/Console/cake Admin {{ item }}
+    cmd: "{{ misp_root }}/app/Console/cake Admin {{ item }}"
   become: true
   become_user: "{{ www_user }}"
   changed_when: false

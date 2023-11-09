@@ -1,5 +1,13 @@
 ---
-- hosts: localhost
+- name: Test playbook
+  hosts: misp
   remote_user: root
+
+  vars:
+    misp_sql_passwd: 'A S3cuR3 p@ssw0rd'
+    misp_gpg_passphrase: '@n 3v3R m0r3 S3cuR3 p@ssw0rd'
+    misp_gpg_name: 'John Wick'
+    misp_gpg_email: 'wick@killthemall.invalid'
+
   roles:
     - role_misp

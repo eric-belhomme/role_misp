@@ -1,38 +1,37 @@
-Role Name
-=========
+# role_misp
 
-A brief description of the role goes here.
+Install MISP 2.4 on EL9 instance
 
-Requirements
-------------
+## Requirements
 
-Any pre-requisites that may not be covered by Ansible itself or the role should be mentioned here. For instance, if the role uses the EC2 module, it may be a good idea to mention in this section that the boto package is required.
+A TLS certificate shall be provided, otherwise a self-signed certificate will be generated. 
 
-Role Variables
---------------
+## Role Variables
+| MISP parameter | default | description |
+|--- |--- |--- |
+| misp_sql_dbname     | misp | MariaDB database name |
+| misp_sql_user       | mispadmin | MariaDB user name |
+| misp_sql_passwd     | _unset_ | MariaDB user password |
+| misp_gpg_passphrase | _unset_ | GPG passphrase |
+| misp_gpg_name       | _unset_ | GPG identity name |
+| misp_gpg_email      | _unset_ | GPG email address |
+| misp_tls_cert       | /etc/pki/tls/certs/misp.crt | www TLS public certificate location |
+| misp_tls_key        | /etc/pki/tls/private/misp.key | www private key location |
+| misp_tls_cachain    | _unset_ | TLS CA chain location |
+| misp_proxy_host   | '' | The hostname of an HTTP proxy for outgoing sync requests. Leave empty to not use a proxy. |
+| misp_proxy_port   | '' | The TCP port for the HTTP proxy.	This setting has to be a number. |
+| misp_proxy_method | '' | The authentication method for the HTTP proxy. Currently supported are Basic or Digest. Leave empty for no proxy authentication |
+| misp_proxy_user   | '' | The authentication username for the HTTP proxy |
+| misp_proxy_passwd | '' | The authentication password for the HTTP proxy |
+| misp_base_url | `https://{{ ansible_fqdn }}` | The base url of the application (in the format https://www.mymispinstance.com or https://myserver.com/misp). Several features depend on this setting being correctly set to function. |
+| misp_external_base_url | `misp_base_url` | The base url of the application (in the format https://www.mymispinstance.com) as visible externally/by other MISPs. MISP will encode this URL in sharing groups when including itself. If this value is not set, the baseurl is used as a fallback |
+| misp_email_from_name | MISP | Notification e-mail sender name. |
+| misp_cortex_host | The url used to access Cortex. By default, it is accessible at http://cortex-url| 
+| misp_cortex_port | 9000 | The port used to access Cortex. By default, this is port 9000 |
 
-A description of the settable variables for this role should go here, including any variables that are in defaults/main.yml, vars/main.yml, and any variables that can/should be set via parameters to the role. Any variables that are read from other roles and/or the global scope (ie. hostvars, group vars, etc.) should be mentioned here as well.
-
-Dependencies
-------------
-
-A list of other roles hosted on Galaxy should go here, plus any details in regards to parameters that may need to be set for other roles, or variables that are used from other roles.
-
-Example Playbook
-----------------
-
-Including an example of how to use your role (for instance, with variables passed in as parameters) is always nice for users too:
-
-    - hosts: servers
-      roles:
-         - { role: username.rolename, x: 42 }
-
-License
--------
+## License
 
 BSD
 
-Author Information
-------------------
-
-An optional section for the role authors to include contact information, or a website (HTML is not allowed).
+## Author Information
+SCC France - Eric Belhomme <ebelhomme@fr.scc.com>

@@ -1,0 +1,33 @@
+---
+
+- name: Stat public cert
+  ansible.builtin.stat:
+    path: "{{ misp_tls_cert }}"
+  register: stat_tls_pub
+
+- name: Stat private key
+  ansible.builtin.stat:
+    path: "{{ misp_tls_key }}"
+  register: stat_tls_key
+
+- name: Genereate self-signed cert
+  when: not stat_tls_pub.stat.exists or not stat_tls_key.stat.exists
+  block:
+
+    - name: Generate an OpenSSL private key
+      community.crypto.openssl_privatekey:
+        path: "{{ misp_tls_key }}"
+        size: 4096
+
+    - name: Generate an OpenSSL Certificate Signing Request
+      community.crypto.openssl_csr:
+        path: "/etc/pki/tls/misc/{{ misp_tls_cert | basename }}.csr"
+        privatekey_path: "{{ misp_tls_key }}"
+        common_name: "{{ ansible_fqdn }}"
+
+    - name: Generate a Self Signed OpenSSL certificate
+      community.crypto.x509_certificate:
+        path: "{{ misp_tls_cert }}"
+        privatekey_path: "{{ misp_tls_key }}"
+        csr_path: "/etc/pki/tls/misc/{{ misp_tls_cert | basename }}.csr"
+        provider: selfsigned
