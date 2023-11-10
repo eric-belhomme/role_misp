@@ -73,7 +73,11 @@ Listen 443 https
     # TODO: Think about X-XSS-Protection, Content-Security-Policy, Referrer-Policy & Feature-Policy
     ## Example:
     # Header always set X-XSS-Protection "1; mode=block"
+{% if misp_csp_sites is defined and misp_csp_sites | length > 0 %}
+    Header always set Content-Security-Policy "default-src 'self'{% for site in misp_csp_sites %} {{ site }}{% endfor %} data: 'unsafe-inline' unsafe-eval'"
+{% else %}
     # Header always set Content-Security-Policy "default-src 'none'; style-src 'self' ... script-src/font-src/img-src/connect-src
+{% endif %}
     # Header always set Referrer-Policy "strict-origin-when-cross-origin"
     # Header always set Feature-Policy "geolocation 'self'; midi 'none'; notifications 'self'; push 'self'; sync-xhr 'self'; microphone 'none'; camera 'self'; magnometer 'self'; gyroscope 'self'; speake 'none'; vibrate 'self'; fullscreen 'none'"
 </VirtualHost>

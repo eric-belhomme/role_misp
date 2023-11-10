@@ -553,7 +553,7 @@
     - "Plugin.Sightings_sighting_db_enable false"
 - name: Cake Cortex setting
   ansible.builtin.command:
-    cmd: "{{ misp_root }}app/Console/cake Admin setSetting {{ item }}"
+    cmd: "{{ misp_root }}/app/Console/cake Admin setSetting {{ item }}"
   become: true
   become_user: "{{ www_user }}"
   changed_when: false

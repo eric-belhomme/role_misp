@@ -25,6 +25,7 @@ A TLS certificate shall be provided, otherwise a self-signed certificate will be
 | misp_proxy_passwd | '' | The authentication password for the HTTP proxy |
 | misp_base_url | `https://{{ ansible_fqdn }}` | The base url of the application (in the format https://www.mymispinstance.com or https://myserver.com/misp). Several features depend on this setting being correctly set to function. |
 | misp_external_base_url | `misp_base_url` | The base url of the application (in the format https://www.mymispinstance.com) as visible externally/by other MISPs. MISP will encode this URL in sharing groups when including itself. If this value is not set, the baseurl is used as a fallback |
+| misp_csp_sites | _unset_ | _Content-Security-Policy_ values. exmple: `['https://*.soc.dcops.scc', 'https://*.anygate.scc-services.fr']` |
 | misp_email_from_name | MISP | Notification e-mail sender name. |
 | misp_cortex_host | The url used to access Cortex. By default, it is accessible at http://cortex-url| 
 | misp_cortex_port | 9000 | The port used to access Cortex. By default, this is port 9000 |
